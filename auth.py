@@ -2,7 +2,6 @@ from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
 from sqlalchemy import create_engine, Column, Integer, String
-import uvicorn
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
@@ -20,6 +19,9 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def hash_password(password: str):
     return pwd_context.hash(password)
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
 
 # Database Model for User
 class UserDB(Base):
@@ -41,7 +43,7 @@ def get_db():
     finally:
         db.close()
 
-# Pydantic Model for User
+# Pydantic Model for User Registration
 class User(BaseModel):
     FullName: str
     Grade: int
@@ -49,22 +51,22 @@ class User(BaseModel):
     Password: str
     confirm_password: str
 
-# Create User (POST)
+# Pydantic Model for User Login
+class LoginUser(BaseModel):
+    email: EmailStr
+    Password: str
+
+# User Registration Endpoint
 @app.post("/register/")
 async def register_user(user: User, db: Session = Depends(get_db)):
-    # Check if passwords match
     if user.Password != user.confirm_password:
         raise HTTPException(status_code=400, detail="Passwords do not match!")
-    
-    # Check if user already exists
+
     existing_user = db.query(UserDB).filter(UserDB.email == user.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="User already exists!")
-    
-    # Hash password before storing
+
     hashed_password = hash_password(user.Password)
-    
-    # Create new user
     new_user = UserDB(
         FullName=user.FullName,
         Grade=user.Grade,
@@ -75,6 +77,18 @@ async def register_user(user: User, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
     return {"message": "User registered successfully!"}
+
+# User Login Endpoint
+@app.post("/login/")
+async def login_user(user: LoginUser, db: Session = Depends(get_db)):
+    existing_user = db.query(UserDB).filter(UserDB.email == user.email).first()
+    if not existing_user:
+        raise HTTPException(status_code=404, detail="User not found!")
+
+    if not verify_password(user.Password, existing_user.Password):
+        raise HTTPException(status_code=401, detail="Incorrect password!")
+
+    return {"message": "Login successful!"}
 
 # Run FastAPI Server
 if __name__ == "__main__":
